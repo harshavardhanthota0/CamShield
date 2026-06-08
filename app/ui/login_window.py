@@ -10,215 +10,152 @@ from PyQt6.QtWidgets import (
     QMessageBox
 )
 
+from PyQt6.QtCore import Qt
+
 from PyQt6.QtGui import (
-    QFont,
     QPixmap,
     QIcon
 )
 
-from PyQt6.QtCore import Qt
-
 from app.auth.auth_system import AuthSystem
+from app.security.password_generator import generate_password
+from app.security.user_email import UserEmailSender
 
 
-class LoginWindow(QWidget):
+class SetupWindow(QWidget):
 
-    def __init__(self, on_success):
+    def __init__(self, on_complete):
 
         super().__init__()
 
+        self.on_complete = on_complete
         self.auth = AuthSystem()
 
-        self.on_success = on_success
-
-        self.setup_ui()
-
-    # =====================================================
-    # UI
-    # =====================================================
-
-    def setup_ui(self):
-
-        self.setWindowTitle(
-            "CamShield - Secure Login"
-        )
+        self.setWindowTitle("CamShield - First Time Setup")
+        self.setFixedSize(500, 520)
 
         self.setWindowIcon(
             QIcon("assets/shield.ico")
         )
 
-        self.setFixedSize(420, 500)
+        self.setup_ui()
 
-        # =====================================================
-        # MAIN LAYOUT
-        # =====================================================
+    def setup_ui(self):
 
         layout = QVBoxLayout()
-
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.setSpacing(20)
 
-        layout.setContentsMargins(
-            40,
-            40,
-            40,
-            40
-        )
+        logo = QLabel("🛡")
+        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        logo.setStyleSheet("font-size: 90px; color: #00c8ff;")
 
-        # =====================================================
-        # LOGO
-        # =====================================================
-
-        logo = QLabel()
-
-        pixmap = QPixmap(
-            "assets/logo.png"
-        )
-
-        logo.setPixmap(
-            pixmap.scaled(
-                100,
-                100,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation
-            )
-        )
-
-        logo.setAlignment(
-            Qt.AlignmentFlag.AlignCenter
-        )
-
-        # =====================================================
-        # TITLE
-        # =====================================================
-
-        title = QLabel(
-            "CamShield"
-        )
-
-        title.setAlignment(
-            Qt.AlignmentFlag.AlignCenter
-        )
-
-        title.setFont(
-            QFont(
-                "Segoe UI",
-                24,
-                QFont.Weight.Bold
-            )
-        )
-
+        title = QLabel("CamShield Setup")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setStyleSheet("""
+        font-size: 34px;
+        font-weight: bold;
         color: #00c8ff;
         """)
 
-       
-
-        # =====================================================
-        # USERNAME
-        # =====================================================
+        subtitle = QLabel("Create your first admin account")
+        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        subtitle.setStyleSheet("font-size: 16px; color: #9ca3af;")
 
         self.username_input = QLineEdit()
+        self.username_input.setPlaceholderText("Enter Admin Username")
+        self.username_input.setFixedHeight(55)
 
-        self.username_input.setPlaceholderText(
-            "Enter Username"
-        )
+        self.email_input = QLineEdit()
+        self.email_input.setPlaceholderText("Enter Admin Email")
+        self.email_input.setFixedHeight(55)
 
-        self.username_input.setFixedHeight(50)
+        setup_btn = QPushButton("Create Admin Account")
+        setup_btn.setFixedHeight(55)
+        setup_btn.clicked.connect(self.create_admin)
 
-        # =====================================================
-        # PASSWORD
-        # =====================================================
-
-        self.password_input = QLineEdit()
-
-        self.password_input.setPlaceholderText(
-            "Enter Password"
-        )
-
-        self.password_input.setEchoMode(
-            QLineEdit.EchoMode.Password
-        )
-
-        self.password_input.setFixedHeight(50)
-
-        # =====================================================
-        # LOGIN BUTTON
-        # =====================================================
-
-        login_btn = QPushButton(
-            "LOGIN"
-        )
-
-        login_btn.setFixedHeight(55)
-
-        login_btn.clicked.connect(
-            self.login_user
-        )
-
-        # =====================================================
-        # STATUS
-        # =====================================================
-
-        self.status = QLabel("")
-
-        self.status.setAlignment(
-            Qt.AlignmentFlag.AlignCenter
-        )
-
-        self.status.setStyleSheet("""
-        color: #ff4d4d;
-        font-size: 13px;
-        """)
-
-        # =====================================================
-        # ADD WIDGETS
-        # =====================================================
+        self.status_label = QLabel("")
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_label.setStyleSheet("font-size: 14px; color: red;")
 
         layout.addStretch()
-
         layout.addWidget(logo)
-
         layout.addWidget(title)
-
-        
-
-        layout.addSpacing(20)
-
-        layout.addWidget(
-            self.username_input
-        )
-
-        layout.addWidget(
-            self.password_input
-        )
-
-        layout.addWidget(login_btn)
-
-        layout.addWidget(self.status)
-
+        layout.addWidget(subtitle)
+        layout.addSpacing(30)
+        layout.addWidget(self.username_input)
+        layout.addWidget(self.email_input)
+        layout.addSpacing(10)
+        layout.addWidget(setup_btn)
+        layout.addWidget(self.status_label)
         layout.addStretch()
 
         self.setLayout(layout)
+        self.apply_style()
 
-        # =====================================================
-        # STYLE
-        # =====================================================
+    def create_admin(self):
+
+        username = self.username_input.text().strip()
+        email = self.email_input.text().strip()
+
+        if username == "" or email == "":
+            self.status_label.setText("Enter username and email")
+            return
+
+        password = generate_password()
+
+        created = self.auth.create_user(
+            username,
+            password,
+            email,
+            "admin"
+        )
+
+        if not created:
+            self.status_label.setText("Admin already exists")
+            return
+
+        try:
+            sender = UserEmailSender()
+
+            sender.send_user_credentials(
+                email,
+                username,
+                password
+            )
+
+            QMessageBox.information(
+                self,
+                "Success",
+                "Admin account created.\nPassword sent to email."
+            )
+
+        except Exception as e:
+            QMessageBox.warning(
+                self,
+                "Email Failed",
+                f"Admin created, but email failed.\n\nPassword: {password}\n\nError: {e}"
+            )
+
+        self.close()
+        self.on_complete()
+
+    def apply_style(self):
 
         self.setStyleSheet("""
-
         QWidget {
-            background-color: #07111f;
+            background-color: #081120;
             color: white;
             font-family: Segoe UI;
         }
 
         QLineEdit {
             background-color: #101827;
-            border: 2px solid #1e293b;
+            border: 2px solid #1f2937;
             border-radius: 12px;
             padding-left: 15px;
-            font-size: 15px;
             color: white;
+            font-size: 16px;
         }
 
         QLineEdit:focus {
@@ -228,86 +165,154 @@ class LoginWindow(QWidget):
         QPushButton {
             background-color: #00c8ff;
             color: black;
-            border-radius: 14px;
-            font-size: 16px;
+            border-radius: 12px;
+            font-size: 18px;
             font-weight: bold;
         }
 
         QPushButton:hover {
             background-color: #00ffff;
         }
-
         """)
 
-    # =====================================================
-    # LOGIN
-    # =====================================================
+
+class LoginWindow(QWidget):
+
+    def __init__(self, on_success):
+
+        super().__init__()
+        
+        self.setWindowIcon(
+            QIcon("assets/shield.ico")
+        )
+
+        self.on_success = on_success
+        self.auth = AuthSystem()
+
+
+        self.setWindowTitle("CamShield - Secure Login")
+        self.setFixedSize(500, 600)
+
+        self.setup_ui()
+
+    def setup_ui(self):
+
+        layout = QVBoxLayout()
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.setSpacing(20)
+
+        logo = QLabel("🛡")
+        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        logo.setStyleSheet("font-size: 90px; color: #00c8ff;")
+
+        title = QLabel("CamShield")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setStyleSheet("""
+        font-size: 36px;
+        font-weight: bold;
+        color: #00c8ff;
+        """)
+
+       
+
+        self.username_input = QLineEdit()
+        self.username_input.setPlaceholderText("Enter Username")
+        self.username_input.setFixedHeight(55)
+
+        self.password_input = QLineEdit()
+        self.password_input.setPlaceholderText("Enter Password")
+        self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.password_input.setFixedHeight(55)
+
+        login_btn = QPushButton("Login")
+        login_btn.setFixedHeight(55)
+        login_btn.clicked.connect(self.login_user)
+
+        self.status_label = QLabel("")
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_label.setStyleSheet("font-size: 14px; color: red;")
+
+        layout.addStretch()
+        layout.addWidget(logo)
+        layout.addWidget(title)
+       
+        layout.addSpacing(30)
+        layout.addWidget(self.username_input)
+        layout.addWidget(self.password_input)
+        layout.addSpacing(10)
+        layout.addWidget(login_btn)
+        layout.addWidget(self.status_label)
+        layout.addStretch()
+
+        self.setLayout(layout)
+        self.apply_style()
 
     def login_user(self):
 
         username = self.username_input.text().strip()
-
         password = self.password_input.text().strip()
 
-        # EMPTY CHECK
         if username == "" or password == "":
-
-            self.status.setStyleSheet("""
-            color: #ff4d4d;
-            font-size: 13px;
-            """)
-
-            self.status.setText(
-                "Enter username and password"
-            )
-
+            self.status_label.setText("Enter username and password")
             return
 
-        # LOGIN CHECK
-        role = self.auth.login(
-            username,
-            password
-        )
+        role = self.auth.login(username, password)
 
-        # SUCCESS
-        if role is not None:
+        if role is None:
+            self.status_label.setText("Wrong username or password")
+            return
 
-            self.status.setStyleSheet("""
-            color: #00ff99;
-            font-size: 13px;
-            """)
+        self.status_label.setText("")
 
-            self.status.setText(
-                "Login Successful"
-            )
+        opened = self.on_success(role)
 
-            self.close()
-
-            self.on_success(role)
-
-        # FAILED
+        if opened:
+            self.hide()
         else:
+            self.status_label.setText("Dashboard failed to open")
 
-            self.status.setStyleSheet("""
-            color: #ff4d4d;
-            font-size: 13px;
-            """)
+    def apply_style(self):
 
-            self.status.setText(
-                "Invalid Username or Password"
-            )
+        self.setStyleSheet("""
+        QWidget {
+            background-color: #081120;
+            color: white;
+            font-family: Segoe UI;
+        }
 
+        QLineEdit {
+            background-color: #101827;
+            border: 2px solid #1f2937;
+            border-radius: 12px;
+            padding-left: 15px;
+            color: white;
+            font-size: 16px;
+        }
 
-# =====================================================
-# RUN DIRECTLY
-# =====================================================
+        QLineEdit:focus {
+            border: 2px solid #00c8ff;
+        }
+
+        QPushButton {
+            background-color: #00c8ff;
+            color: black;
+            border-radius: 12px;
+            font-size: 18px;
+            font-weight: bold;
+        }
+
+        QPushButton:hover {
+            background-color: #00ffff;
+        }
+        """)
+
 
 if __name__ == "__main__":
 
     app = QApplication(sys.argv)
 
     window = LoginWindow(
-        lambda role: print(role)
+        lambda role: print("Logged in as:", role)
     )
 
     window.show()

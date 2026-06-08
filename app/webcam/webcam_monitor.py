@@ -22,22 +22,17 @@ class WebcamMonitor:
 
     def start_camera(self):
 
-        if self.camera is None:
+        if self.camera is not None:
+            self.camera.release()
+            self.camera = None
 
-            self.camera = cv2.VideoCapture(
-                0,
-                cv2.CAP_DSHOW
-            )
-            self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-            if not self.camera.isOpened():
+        self.camera = cv2.VideoCapture(0, cv2.CAP_DSHOW)
 
-                print("Cannot access webcam")
+        if not self.camera.isOpened():
+            print("Failed To Access Webcam")
+            return False
 
-                return False
-
-            print("Webcam Started")
-
+        print("Webcam Started")
         return True
 
     # ==========================================

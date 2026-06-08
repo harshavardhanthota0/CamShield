@@ -2,19 +2,28 @@ import sys
 import os
 import time
 import cv2
-import numpy as np
-import face_recognition
 import json
 import bcrypt
+import threading
+import subprocess
+
 import numpy as np
-from app.security.encrypted_logger import EncryptedLogger
-from PyQt6.QtGui import QIcon
+import face_recognition
 
+from playsound import playsound
 
-from PyQt6.QtCore import Qt, QSize, QTimer
-from PyQt6.QtGui import QPixmap, QIcon, QImage
-from PyQt6.QtWidgets import QInputDialog
-from PyQt6.QtWidgets import QMessageBox
+from PyQt6.QtCore import (
+    Qt,
+    QSize,
+    QTimer,
+    QTime
+)
+
+from PyQt6.QtGui import (
+    QPixmap,
+    QIcon,
+    QImage
+)
 
 from PyQt6.QtWidgets import (
     QApplication,
@@ -28,10 +37,14 @@ from PyQt6.QtWidgets import (
     QTextEdit,
     QDialog,
     QStackedWidget,
-    QGridLayout
+    QGridLayout,
+    QInputDialog,
+    QMessageBox,
+    QTimeEdit
 )
 
-from app.database import logs
+from app.security.email_alert import EmailAlert
+from app.security.encrypted_logger import EncryptedLogger
 from app.webcam.webcam_monitor import WebcamMonitor
 from app.auth.register import RegisterWindow
 
@@ -44,38 +57,57 @@ class CamShield(QWidget):
 
         self.role = role
 
-        self.webcam = WebcamMonitor()
-        self.logger = EncryptedLogger()
-
-
-        self.register_window = RegisterWindow()
-
-        self.known_face_encodings = []
-        self.known_face_names = []
-
-        self.last_intruder_time = 0
-        self.cooldown = 10
-
+        # WINDOW
         self.setWindowTitle("CamShield - Secure Dashboard")
-
         self.setGeometry(100, 50, 1500, 900)
-
-        self.setup_ui()
-
-        self.timer = QTimer()
-
-        self.timer.timeout.connect(self.update_frame)
-
-        self.load_known_faces()
         self.setWindowIcon(
             QIcon("assets/shield.ico")
         )
+
+        # CORE SERVICES
+        self.webcam = WebcamMonitor()
+        self.logger = EncryptedLogger()
+        self.email_alert = EmailAlert()
+        self.register_window = RegisterWindow()
+
+        # FACE DATA
+        self.known_face_encodings = []
+        self.known_face_names = []
+        self.last_detected_name = ""
+
+        # INTRUDER COOLDOWN
+        self.last_intruder_time = 0
+        self.cooldown = 60 * 5  # 5 minutes
+
+        # SAFE CAMERA LOCK
+        self.camera_lock = None
+
+        # SCHEDULER
+        self.schedule_enabled = False
+
+        # UI
+        self.setup_ui()
+
+        # CAMERA TIMER
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.update_frame)
+
+        # SCHEDULER TIMER
+        self.scheduler_timer = QTimer()
+        self.scheduler_timer.timeout.connect(
+            self.check_schedule
+        )
+        self.scheduler_timer.start(1000)
+
+        # LOAD FACES
+        self.load_known_faces()
 
     # =====================================================
     # UI
     # =====================================================
 
     def setup_ui(self):
+        print("UI LOADING...")
 
         main_layout = QHBoxLayout()
 
@@ -637,7 +669,102 @@ Red Box    = Unknown Intruder
         settings_page.setLayout(
             settings_layout
         )
-            
+
+        # =====================================================
+# WEBCAM SCHEDULER
+# =====================================================
+
+        settings_layout.addSpacing(30)
+
+        schedule_title = QLabel(
+            "Webcam Scheduler"
+        )
+
+        schedule_title.setStyleSheet("""
+        font-size: 22px;
+        color: #00c8ff;
+        font-weight: bold;
+        """)
+
+        settings_layout.addWidget(
+            schedule_title
+        )
+
+        # =====================================================
+        # START TIME
+        # =====================================================
+
+        start_label = QLabel(
+            "Start Time"
+        )
+
+        self.start_time = QTimeEdit()
+
+        self.start_time.setDisplayFormat(
+            "hh:mm AP"
+        )
+
+        self.start_time.setTime(
+            QTime(9, 0)
+        )
+
+        self.start_time.setFixedHeight(50)
+
+        settings_layout.addWidget(
+            start_label
+        )
+
+        settings_layout.addWidget(
+            self.start_time
+        )
+
+        # =====================================================
+        # END TIME
+        # =====================================================
+
+        end_label = QLabel(
+            "End Time"
+        )
+
+        self.end_time = QTimeEdit()
+
+        self.end_time.setDisplayFormat(
+            "hh:mm AP"
+        )
+
+        self.end_time.setTime(
+            QTime(18, 0)
+        )
+
+        self.end_time.setFixedHeight(50)
+
+        settings_layout.addWidget(
+            end_label
+        )
+
+        settings_layout.addWidget(
+            self.end_time
+        )
+
+        # =====================================================
+        # ENABLE SCHEDULER BUTTON
+        # =====================================================
+
+        schedule_btn = QPushButton(
+            "Enable Webcam Schedule"
+        )
+
+        schedule_btn.setFixedHeight(55)
+
+        schedule_btn.clicked.connect(
+            self.enable_schedule
+        )
+
+        settings_layout.addSpacing(15)
+
+        settings_layout.addWidget(
+            schedule_btn
+        )   
 
        
         
@@ -786,38 +913,79 @@ Red Box    = Unknown Intruder
     def enable_webcam(self):
 
         if self.role != "admin":
-
             print("[ACCESS DENIED]")
-
             return
 
+        # release lock if active
+        if hasattr(self, "camera_lock") and self.camera_lock is not None:
+            self.camera_lock.release()
+            self.camera_lock = None
+
         if self.webcam.start_camera():
-
             self.timer.start(30)
-
+            self.camera_label.setText("")
+            self.status.setText("🟢 Camera Active")
             print("Webcam Started")
-        self.status.setText(
-            "🟢 Camera Active"
-        )
 
-    # =====================================================
-    # DISABLE CAMERA
-    # =====================================================
 
     def disable_webcam(self):
 
+        # stop CamShield preview
         self.timer.stop()
-
         self.webcam.stop_camera()
 
-        self.camera_label.clear()
+        # lock camera safely by occupying it
+        import cv2
 
-        self.camera_label.setText(
-            "Camera Disabled"
+        self.camera_lock = cv2.VideoCapture(
+            0,
+            cv2.CAP_DSHOW
         )
-        self.status.setText(
-            "🔴 Camera Disabled"
+
+        self.camera_label.clear()
+        self.camera_label.setText("Camera Locked & Protected")
+        self.status.setText("🔴 Camera Locked")
+
+        print("Camera locked safely")
+
+    
+        
+    def disable_system_camera(self):
+
+        import subprocess
+
+        device_id = r"USB\VID_0C45&PID_6730&MI_00\6&30134149&0&0000"
+
+        command = f'powershell -Command "Disable-PnpDevice -InstanceId \'{device_id}\' -Confirm:$false"'
+
+        result = subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            text=True
         )
+
+        print(result.stdout)
+        print(result.stderr)
+
+
+    def enable_system_camera(self):
+
+        import subprocess
+
+        device_id = r"USB\VID_0C45&PID_6730&MI_00\6&30134149&0&0000"
+
+        command = f'powershell -Command "Enable-PnpDevice -InstanceId \'{device_id}\' -Confirm:$false"'
+
+        result = subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            text=True
+        )
+
+        print(result.stdout)
+        print(result.stderr)
 
     # =====================================================
     # REGISTER WINDOW
@@ -1038,6 +1206,8 @@ Red Box    = Unknown Intruder
                     self.last_intruder_time
                 ) > self.cooldown:
 
+                    self.trigger_alert()
+
                     print("[INTRUDER DETECTED]")
 
                     # SAVE IMAGE
@@ -1045,7 +1215,12 @@ Red Box    = Unknown Intruder
                         frame
                     )
 
-                    # SAVE ENCRYPTED LOG
+                    # SEND EMAIL
+                    self.email_alert.send_intruder_alert(
+                        path
+                    )
+
+                    # SAVE LOG
                     self.logger.log_intruder(path)
 
                     # REFRESH UI
@@ -1093,7 +1268,13 @@ Red Box    = Unknown Intruder
 
         if face_names:
 
-            print("Detected:", face_names)
+            current_name = face_names[0]
+
+            if current_name != self.last_detected_name:
+
+                print("Detected:", current_name)
+
+                self.last_detected_name = current_name
 
     # =====================================================
     # LOAD LOGS
@@ -1409,61 +1590,132 @@ Red Box    = Unknown Intruder
         )
     def create_new_user(self):
 
+        from PyQt6.QtWidgets import QInputDialog, QMessageBox
+        from app.auth.auth_system import AuthSystem
+        from app.security.password_generator import generate_password
+        from app.security.user_email import UserEmailSender
+
         username, ok1 = QInputDialog.getText(
             self,
-            "Create User",
+            "Create New User",
             "Enter username:"
         )
 
         if not ok1 or not username:
             return
 
-        password, ok2 = QInputDialog.getText(
+        email, ok2 = QInputDialog.getText(
             self,
-            "Create User",
-            "Enter password:"
+            "User Email",
+            "Enter user email:"
         )
 
-        if not ok2 or not password:
+        if not ok2 or not email:
             return
 
-        db_file = "database/users.json"
+        password = generate_password()
 
-        with open(db_file, "r") as file:
+        auth = AuthSystem()
 
-            users = json.load(file)
+        created = auth.create_user(
+            username,
+            password,
+            email,
+            "user"
+        )
 
-        # USER EXISTS
-        if username in users:
-
+        if not created:
             QMessageBox.warning(
                 self,
                 "Error",
                 "User already exists"
             )
-
             return
 
-        hashed = bcrypt.hashpw(
-            password.encode(),
-            bcrypt.gensalt()
-        ).decode()
+        try:
+            sender = UserEmailSender()
 
-        users[username] = {
-            "password": hashed,
-            "role": "user"
-        }
+            sender.send_user_credentials(
+                email,
+                username,
+                password
+            )
 
-        with open(db_file, "w") as file:
+            QMessageBox.information(
+                self,
+                "Success",
+                "User created and password sent to email"
+            )
 
-            json.dump(users, file, indent=4)
+        except Exception as e:
+            QMessageBox.warning(
+                self,
+                "Email Failed",
+                f"User created, but email failed.\n\nPassword: {password}\n\nError: {e}"
+            )
+    def trigger_alert(self):
+
+    # PLAY SOUND IN THREAD
+        threading.Thread(
+            target=playsound,
+            args=("assets/sounds/alarm.wav",),
+            daemon=True
+        ).start()
+
+        # POPUP ALERT
+        QMessageBox.warning(
+            self,
+            "SECURITY ALERT",
+            "Unknown Intruder Detected!"
+        )
+    # =====================================================
+# ENABLE WEBCAM SCHEDULE
+# =====================================================
+
+    def enable_schedule(self):
+
+        self.schedule_enabled = True
 
         QMessageBox.information(
             self,
-            "Success",
-            f"User '{username}' created"
+            "Scheduler",
+            "Webcam Schedule Enabled"
         )
 
+        print("Webcam Scheduler Enabled")
+    # =====================================================
+# CHECK SCHEDULE
+# =====================================================
+
+    def check_schedule(self):
+
+        if not self.schedule_enabled:
+            return
+
+        current_time = QTime.currentTime()
+
+        start = self.start_time.time()
+
+        end = self.end_time.time()
+
+        # INSIDE TIME RANGE
+        if start <= current_time <= end:
+
+            if not self.webcam.camera:
+
+                print("Schedule -> Camera ON")
+
+                self.enable_webcam()
+
+        # OUTSIDE TIME RANGE
+        else:
+
+            if self.webcam.camera:
+
+                print("Schedule -> Camera OFF")
+
+                self.disable_webcam()
+        
    
     # =====================================================
 # RUN APP

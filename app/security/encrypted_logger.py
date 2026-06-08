@@ -1,5 +1,7 @@
 import os
+import sys
 from datetime import datetime
+
 from cryptography.fernet import Fernet
 
 
@@ -11,16 +13,23 @@ class EncryptedLogger:
 
         self.log_file = "logs/intruder_logs.txt"
 
-        # LOAD KEY
-        with open("secret.key", "rb") as key_file:
+        # EXE MODE
+        if getattr(sys, "frozen", False):
+            key_path = os.path.join(
+                sys._MEIPASS,
+                "secret.key"
+            )
 
-            key = key_file.read()
+        # NORMAL PYTHON MODE
+        else:
+            key_path = os.path.abspath(
+                "secret.key"
+            )
 
-        self.cipher = Fernet(key)
+        with open(key_path, "rb") as key_file:
+            self.key = key_file.read()
 
-    # =====================================================
-    # WRITE ENCRYPTED LOG
-    # =====================================================
+        self.cipher = Fernet(self.key)
 
     def log_intruder(self, image_path):
 
@@ -39,39 +48,33 @@ class EncryptedLogger:
         )
 
         with open(self.log_file, "ab") as file:
-
             file.write(encrypted + b"\n")
 
         print("[ENCRYPTED LOG SAVED]")
 
-    # =====================================================
-    # READ DECRYPTED LOGS
-    # =====================================================
-
     def read_logs(self):
 
         if not os.path.exists(self.log_file):
-
             return "No logs found"
 
         logs = []
 
         with open(self.log_file, "rb") as file:
-
             lines = file.readlines()
 
         for line in lines:
 
             try:
-
                 decrypted = self.cipher.decrypt(
                     line.strip()
                 ).decode()
 
                 logs.append(decrypted)
 
-            except:
-
+            except Exception:
                 continue
+
+        if len(logs) == 0:
+            return "No logs found"
 
         return "\n".join(logs)
