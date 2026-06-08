@@ -1,9 +1,30 @@
-venv/
+# Python
 __pycache__/
 *.pyc
+
+# Virtual Environment
+venv/
+
+# Build Files
 build/
 dist/
 *.spec
-logs/
-snapshots/
-database/*.db
+
+# VS Code
+.vscode/
+
+# Database
+database/users.json
+database/intruders.json
+
+# Security
+secret.key
+
+# Face Images
+known_faces/
+
+# Logs
+*.log
+
+# Temporary Files
+*.tmp
