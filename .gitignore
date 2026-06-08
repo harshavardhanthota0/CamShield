@@ -17,3 +17,5 @@ known_faces/
 
 *.pyc
 *.spec
+*.db
+camshield.db
